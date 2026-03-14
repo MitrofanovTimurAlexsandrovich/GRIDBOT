@@ -29,7 +29,7 @@ from grid_backtest import GridParams, run_grid_backtest
 # ══════════════════════════════════════════════════════
 #  CONFIG
 # ══════════════════════════════════════════════════════
-FILE       = "C:/Users/Madness/PycharmProjects/Crupto_Data_Joiner/Raw_Data/BYBIT_BTCUSDT_LINEAR_2020_2026.csv"
+FILE       = "/BYBIT_DOGEUSDT_LINEAR_2021_2026.csv"# "C:/Users/Madness/PycharmProjects/Crupto_Data_Joiner/Raw_Data/BYBIT_DOGEUSDT_LINEAR_2021_2026.csv"
 CAPITAL    = 1000.0
 COMMISSION = 0.0018
 OUT_DIR    = "results"

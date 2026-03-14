@@ -1,3 +1,0 @@
-n_orders,grid_pct,tp_pct,step_type,size_type,step_min,step_max,step_pattern,size_min,size_max,score,total_pnl,max_drawdown,trade_count,avg_trade_minutes,max_trade_minutes,win_rate,profit_factor,sharpe,last365_pnl,last365_trades,last365_avg_min,last365_max_min
-5,10,0.5,uniform,random_mono,2.0,2.0,uniform,166.68,233.41,0.001847,623.7479,755.562,1507,2070.0,1202870.0,99.93,2.4113,1.408,-329.4083,157,3423.6,210210
-5,10,0.5,uniform,random_mono,2.0,2.0,uniform,135.33,244.51,0.001392,603.6654,754.8201,1708,1826.3,1202864.0,99.94,2.3995,1.3962,-328.0226,171,3143.3,207390

@@ -16,7 +16,7 @@ import ast
 # ═════════════════════════════════════════════════════════════════════════════
 
 # Путь к CSV с рыночными данными (тот же файл что использовался при оптимизации)
-FILE = "C:/Users/Madness/PycharmProjects/Crupto_Data_Joiner/Raw_Data/BYBIT_DOGEUSDT_LINEAR_2021_2026.csv"
+FILE = "C:/Users/Madness/PycharmProjects/Crupto_Data_Joiner/Raw_Data/BYBIT_BTCUSDT_LINEAR_2020_2026.csv"
 
 # Источник параметров — выбери один из двух вариантов:
 # CSV: результаты оптимизации (шаги/размеры для random-режимов могут не совпасть)

@@ -14,7 +14,7 @@ import numpy as np
 # ═════════════════════════════════════════════════════════════════════════════
 
 # Путь к CSV рыночных данных
-FILE = "C:/Users/Madness/PycharmProjects/Crupto_Data_Joiner/Raw_Data/BYBIT_BTCUSDT_LINEAR_2020_2026.csv"
+FILE = "C:/Users/Madness/PycharmProjects/Crupto_Data_Joiner/Raw_Data/BYBIT_DOGEUSDT_LINEAR_2021_2026.csv"
 
 # Путь к CSV результатов grid_scan
 SCAN_CSV = ""   # пусто = авто из FILE: results/grid_scan_<SYMBOL>.csv
