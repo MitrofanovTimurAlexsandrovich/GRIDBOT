@@ -321,8 +321,8 @@ def run_grid_backtest(
             open_ts  = pd.to_datetime(t.get('open_ts', t['timestamp']))
             close_ts = pd.to_datetime(t['timestamp'])  # timestamp = момент закрытия
 
-            # Годовая статистика — по году открытия
-            yr = open_ts.year
+            # Годовая статистика — по году ЗАКРЫТИЯ (деньги получены в момент закрытия)
+            yr = close_ts.year
             if yr not in yearly:
                 yearly[yr] = {'pnl': 0.0, 'trades': 0, 'duration_sum': 0, 'max_minutes': 0}
             yearly[yr]['pnl']          += t['pnl']
@@ -330,9 +330,9 @@ def run_grid_backtest(
             yearly[yr]['duration_sum'] += t['duration']
             yearly[yr]['max_minutes']   = max(yearly[yr]['max_minutes'], t['duration'])
 
-            # last_365: сделка АКТИВНА в периоде если она пересекается с ним
-            # т.е. открылась ДО конца периода И закрылась ПОСЛЕ начала периода
-            if open_ts <= last_ts and close_ts >= cutoff_365:
+            # last_365: сделка учитывается если ЗАКРЫЛАСЬ внутри последних 365 дней
+            # (деньги получены в этот период — неважно когда открылась)
+            if close_ts >= cutoff_365:
                 last_365['pnl']          += t['pnl']
                 last_365['trades']       += 1
                 last_365['duration_sum'] += t['duration']

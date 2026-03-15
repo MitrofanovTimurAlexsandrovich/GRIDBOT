@@ -19,9 +19,15 @@ FILE = "C:/Users/Madness/PycharmProjects/Crupto_Data_Joiner/Raw_Data/BYBIT_DOGEU
 # Путь к CSV результатов grid_scan
 SCAN_CSV = ""   # пусто = авто из FILE: results/grid_scan_<SYMBOL>.csv
 
-# Какой score визуализировать (ищет строку с ближайшим значением)
-# None = показать таблицу топ-N и спросить
+# Выбор строки — два варианта (оба можно оставить None = интерактивный режим):
+#   ROW        — номер строки в CSV (0-based), игнорирует FIND_SCORE
+#   FIND_SCORE — ищет строку с ближайшим score
+# Если оба None — показывает таблицу и спрашивает
+ROW        = 0
 FIND_SCORE = None
+
+# Включать строки со score=-999 в таблицу и поиск?
+SHOW_INVALID = True   # True = все строки, False = только score > -999
 
 # Показать только таблицу топ-N без бэктеста
 LIST_ONLY  = False
@@ -201,31 +207,71 @@ def main():
         list_csv(scan_csv, LIST_TOP_N)
         return
 
-    df_scan = pd.read_csv(scan_csv)
-    df_valid = df_scan[df_scan["score"] > -999].sort_values("score", ascending=False).reset_index(drop=True)
-    if df_valid.empty:
-        print("  Нет валидных строк в CSV")
+    df_scan = pd.read_csv(scan_csv).reset_index(drop=True)
+
+    # Рабочий датафрейм — все строки или только валидные
+    if SHOW_INVALID:
+        df_work = df_scan.copy()
+    else:
+        df_work = df_scan[df_scan["score"] > -999].reset_index(drop=True)
+
+    if df_work.empty:
+        print("  Нет строк в CSV")
         return
 
-    # Определяем score для поиска
-    find_score = FIND_SCORE
-    if find_score is None:
+    row = None
+
+    # Приоритет 1: ROW — прямой номер строки в исходном CSV
+    if ROW is not None:
+        if ROW >= len(df_scan):
+            print(f"  Строка #{ROW} не существует, в CSV {len(df_scan)} строк")
+            return
+        row = df_scan.iloc[ROW]
+        print(f"\n  Строка #{ROW}  score={row['score']:.4f}")
+
+    # Приоритет 2: FIND_SCORE — поиск по score (включая -999)
+    elif FIND_SCORE is not None:
+        idx  = (df_scan["score"] - FIND_SCORE).abs().idxmin()
+        row  = df_scan.iloc[idx]
+        diff = abs(row["score"] - FIND_SCORE)
+        print(f"\n  Найдена строка #{idx}  score={row['score']:.4f}"
+              + (f"  (искали {FIND_SCORE:.4f}, отклонение {diff:.6f})" if diff > 0.0001 else ""))
+
+    # Приоритет 3: интерактивный режим
+    else:
+        # Для таблицы показываем топ по score (валидные) + предупреждение
+        df_top = df_scan[df_scan["score"] > -999].sort_values("score", ascending=False)
         list_csv(scan_csv, LIST_TOP_N)
+        print(f"  Всего строк в CSV: {len(df_scan):,}  "
+              f"(валидных: {len(df_top):,}  score=-999: {(df_scan['score'] <= -999).sum():,})")
+        print(f"  Введи номер строки (row#) или score:")
         try:
-            val = input("  Введи score (или Enter для лучшего): ").strip()
-            find_score = float(val) if val else df_valid["score"].iloc[0]
+            val = input("  row#N или score (Enter = лучший): ").strip()
+            if val == "":
+                row = df_top.iloc[0]
+                print(f"  Лучший: строка #{row.name}  score={row['score']:.4f}")
+            elif val.lower().startswith("row"):
+                row_idx = int(val[3:])
+                if row_idx >= len(df_scan):
+                    print(f"  Строка #{row_idx} не существует")
+                    return
+                row = df_scan.iloc[row_idx]
+                print(f"  Строка #{row_idx}  score={row['score']:.4f}")
+            else:
+                find_score = float(val)
+                idx  = (df_scan["score"] - find_score).abs().idxmin()
+                row  = df_scan.iloc[idx]
+                diff = abs(row["score"] - find_score)
+                print(f"  Найдена строка #{idx}  score={row['score']:.4f}"
+                      + (f"  (отклонение {diff:.6f})" if diff > 0.0001 else ""))
         except (ValueError, KeyboardInterrupt):
             print("  Отмена.")
             return
 
-    # Находим строку с ближайшим score
-    idx  = (df_valid["score"] - find_score).abs().idxmin()
-    row  = df_valid.iloc[idx]
-    diff = abs(row["score"] - find_score)
-    print(f"\n  Найдена строка #{idx}  score={row['score']:.4f}"
-          + (f"  (искали {find_score:.4f}, отклонение {diff:.4f})" if diff > 0.0001 else ""))
+    if row["score"] <= -999:
+        print(f"  ⚠️  Score = -999 (фильтр не прошёл при сканировании) — запускаем бэктест без ограничений")
 
-    score_tag = f"{row['score']:.4f}".replace(".", "_")
+    score_tag = f"row{int(row.name)}_score{row['score']:.4f}".replace(".", "_").replace("-", "m")
     df_market = load_data(FILE)
     run_and_plot(row, df_market, symbol, score_tag)
 
