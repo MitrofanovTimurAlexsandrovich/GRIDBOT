@@ -209,6 +209,7 @@ def run_grid_backtest(
                         "tp_price":    tp_price,
                         "pnl":         trade_pnl,
                         "timestamp":   df["timestamp"].iloc[i] if "timestamp" in df.columns else i,
+                        "open_ts":     df["timestamp"].iloc[first_fill_bar] if "timestamp" in df.columns else first_fill_bar,
                     })
 
                     # Просадка
@@ -265,6 +266,7 @@ def run_grid_backtest(
             "tp_price":       None,
             "pnl":            unrealized_pnl,  # нереализованный — не в closed_pnl
             "timestamp":      last_ts,
+            "open_ts":        df["timestamp"].iloc[first_fill_bar] if "timestamp" in df.columns else first_fill_bar,
             "forced":         True,
             "unrealized":     True,            # маркер: не входит в total_pnl
         })
@@ -309,47 +311,42 @@ def run_grid_backtest(
 
     # ── Статистика по годам + последние 365 дней ────────────────────────
     if trade_log and 'timestamp' in df.columns:
-        last_ts   = pd.to_datetime(df['timestamp'].iloc[-1])
+        last_ts    = pd.to_datetime(df['timestamp'].iloc[-1])
         cutoff_365 = last_ts - pd.Timedelta(days=365)
         yearly = {}
         last_365 = {'pnl': 0.0, 'trades': 0, 'duration_sum': 0, 'max_minutes': 0}
-        for t in [x for x in trade_log if not x.get('unrealized', False)]:
-            ts = pd.to_datetime(t['timestamp'])
-            yr = ts.year
+
+        all_trades = [t for t in trade_log if not t.get('unrealized', False)]
+        for t in all_trades:
+            open_ts  = pd.to_datetime(t.get('open_ts', t['timestamp']))
+            close_ts = pd.to_datetime(t['timestamp'])  # timestamp = момент закрытия
+
+            # Годовая статистика — по году открытия
+            yr = open_ts.year
             if yr not in yearly:
-                yearly[yr] = {'pnl': 0.0, 'trades': 0, 'duration_sum': 0}
+                yearly[yr] = {'pnl': 0.0, 'trades': 0, 'duration_sum': 0, 'max_minutes': 0}
             yearly[yr]['pnl']          += t['pnl']
             yearly[yr]['trades']       += 1
             yearly[yr]['duration_sum'] += t['duration']
-            yearly[yr]['max_minutes']   = max(yearly[yr].get('max_minutes', 0), t['duration'])
-            if ts >= cutoff_365:
+            yearly[yr]['max_minutes']   = max(yearly[yr]['max_minutes'], t['duration'])
+
+            # last_365: сделка АКТИВНА в периоде если она пересекается с ним
+            # т.е. открылась ДО конца периода И закрылась ПОСЛЕ начала периода
+            if open_ts <= last_ts and close_ts >= cutoff_365:
                 last_365['pnl']          += t['pnl']
                 last_365['trades']       += 1
                 last_365['duration_sum'] += t['duration']
-                last_365['max_minutes']   = max(last_365.get('max_minutes', 0), t['duration'])
+                last_365['max_minutes']   = max(last_365['max_minutes'], t['duration'])
+
         for yr in yearly:
             tr = yearly[yr]['trades']
             yearly[yr]['avg_minutes'] = yearly[yr]['duration_sum'] / tr if tr else 0
         tr365 = last_365['trades']
         last_365['avg_minutes'] = last_365['duration_sum'] / tr365 if tr365 else 0
         last_365['period'] = f"{cutoff_365.strftime('%Y-%m-%d')} — {last_ts.strftime('%Y-%m-%d')}"
-        result.yearly_stats  = yearly
+        result.yearly_stats   = yearly
         result.last_365_stats = last_365
-
-    # ── Последние 365 дней от последней свечи ────────────────────────────
-    if trade_log and 'timestamp' in df.columns:
-        last_ts   = pd.to_datetime(df['timestamp'].iloc[-1])
-        cutoff_ts = last_ts - pd.Timedelta(days=365)
-        last365   = [t for t in trade_log if pd.to_datetime(t['timestamp']) >= cutoff_ts]
-        if last365:
-            result.last_year_stats = {
-                'pnl':         sum(t['pnl'] for t in last365),
-                'trades':      len(last365),
-                'avg_minutes': sum(t['duration'] for t in last365) / len(last365),
-                'max_minutes': max(t['duration'] for t in last365),
-                'from':        str(cutoff_ts.date()),
-                'to':          str(last_ts.date()),
-            }
+        result.last_year_stats = last_365  # алиас для совместимости
 
     result.score = compute_score(result)
     return result
