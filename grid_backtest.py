@@ -64,6 +64,7 @@ class BacktestResult:
     total_pnl:         float = 0.0
     max_drawdown:      float = 0.0
     max_dd_bar:        int   = 0     # индекс бара с максимальной просадкой
+    max_orders_filled: int   = 0     # макс. кол-во ордеров сетки задействованных одновременно
     trade_count:       int   = 0
     avg_trade_minutes: float = 0.0
     max_trade_minutes: float = 0.0
@@ -110,6 +111,7 @@ def run_grid_backtest(
     peak_equity     = initial_capital
     max_dd          = 0.0
     max_dd_bar      = 0     # бар с максимальной просадкой
+    max_orders_hit  = 0     # максимально задействованных ордеров одновременно
     closed_pnl      = 0.0
     trade_log       = []
     equity_curve    = []
@@ -195,11 +197,14 @@ def run_grid_backtest(
 
                     duration_min = i - first_fill_bar
 
+                    orders_now = sum(order_filled)
+                    if orders_now > max_orders_hit:
+                        max_orders_hit = orders_now
                     trade_log.append({
                         "open_bar":    first_fill_bar,
                         "close_bar":   i,
                         "duration":    duration_min,
-                        "orders_hit":  sum(order_filled),
+                        "orders_hit":  orders_now,
                         "avg_entry":   position_cost / position_qty,
                         "tp_price":    tp_price,
                         "pnl":         trade_pnl,
@@ -239,36 +244,34 @@ def run_grid_backtest(
         i += 1
 
     # ── Принудительное закрытие незакрытой позиции на последней свече ─────────
+    # Только для статистики времени — НЕ влияет на PnL и Score
     if in_position and position_qty > 0:
         last_bar   = len(df) - 1
         last_price = float(df["close"].iloc[last_bar])
         last_ts    = df["timestamp"].iloc[last_bar] if "timestamp" in df.columns else last_bar
 
-        close_value   = position_qty * last_price
-        fee_close     = close_value * commission
-        trade_pnl     = close_value - position_cost - fee_close
-        closed_pnl   += trade_pnl
-        equity        += trade_pnl
-        duration_min  = last_bar - first_fill_bar
+        # Считаем нереализованный PnL только для отображения — не прибавляем к closed_pnl
+        close_value     = position_qty * last_price
+        fee_close       = close_value * commission
+        unrealized_pnl  = close_value - position_cost - fee_close
+        duration_min    = last_bar - first_fill_bar
 
         trade_log.append({
-            "open_bar":   first_fill_bar,
-            "close_bar":  last_bar,
-            "duration":   duration_min,
-            "orders_hit": sum(order_filled),
-            "avg_entry":  position_cost / position_qty,
-            "tp_price":   None,           # не по TP — принудительное закрытие
-            "pnl":        trade_pnl,
-            "timestamp":  last_ts,
-            "forced":     True,           # маркер принудительного закрытия
+            "open_bar":       first_fill_bar,
+            "close_bar":      last_bar,
+            "duration":       duration_min,
+            "orders_hit":     sum(order_filled),
+            "avg_entry":      position_cost / position_qty,
+            "tp_price":       None,
+            "pnl":            unrealized_pnl,  # нереализованный — не в closed_pnl
+            "timestamp":      last_ts,
+            "forced":         True,
+            "unrealized":     True,            # маркер: не входит в total_pnl
         })
-
-        # Обновляем просадку по финальной цене закрытия
-        if equity > peak_equity:
-            peak_equity = equity
-        dd = peak_equity - equity
-        if dd > max_dd:
-            max_dd = dd
+        # closed_pnl и equity НЕ обновляются — форсированная сделка не в PnL
+        orders_now = sum(order_filled)
+        if orders_now > max_orders_hit:
+            max_orders_hit = orders_now
 
     # ── Вычисляем итоговые метрики ────────────────────────────────────────────
     result = BacktestResult()
@@ -278,14 +281,19 @@ def run_grid_backtest(
     result.trade_log    = trade_log
     result.total_pnl    = closed_pnl
     result.max_drawdown = max_dd
-    result.max_dd_bar   = max_dd_bar
+    result.max_dd_bar       = max_dd_bar
+    result.max_orders_filled = max_orders_hit
     result.trade_count  = len(trade_log)
 
-    if trade_log:
-        pnls     = [t["pnl"] for t in trade_log]
-        wins     = [p for p in pnls if p > 0]
-        losses   = [p for p in pnls if p <= 0]
-        durations = [t["duration"] for t in trade_log]
+    # Для статистики используем только реальные (закрытые по TP) сделки
+    closed_trades = [t for t in trade_log if not t.get("unrealized", False)]
+    result.trade_count = len(closed_trades)  # переопределяем: только TP-сделки
+
+    if closed_trades:
+        pnls      = [t["pnl"] for t in closed_trades]
+        wins      = [p for p in pnls if p > 0]
+        losses    = [p for p in pnls if p <= 0]
+        durations = [t["duration"] for t in closed_trades]
 
         result.win_rate          = len(wins) / len(pnls) * 100
         result.avg_trade_minutes = float(np.mean(durations))
@@ -305,7 +313,7 @@ def run_grid_backtest(
         cutoff_365 = last_ts - pd.Timedelta(days=365)
         yearly = {}
         last_365 = {'pnl': 0.0, 'trades': 0, 'duration_sum': 0, 'max_minutes': 0}
-        for t in trade_log:
+        for t in [x for x in trade_log if not x.get('unrealized', False)]:
             ts = pd.to_datetime(t['timestamp'])
             yr = ts.year
             if yr not in yearly:

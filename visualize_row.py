@@ -16,24 +16,24 @@ import ast
 # ═════════════════════════════════════════════════════════════════════════════
 
 # Путь к CSV с рыночными данными (тот же файл что использовался при оптимизации)
-FILE = "C:/Users/Madness/PycharmProjects/Crupto_Data_Joiner/Raw_Data/BYBIT_BTCUSDT_LINEAR_2020_2026.csv"
+FILE = "C:/Users/Madness/PycharmProjects/Crupto_Data_Joiner/Raw_Data/BYBIT_DOGEUSDT_LINEAR_2021_2026.csv"
 
 # Источник параметров — выбери один из двух вариантов:
 # CSV: результаты оптимизации (шаги/размеры для random-режимов могут не совпасть)
 # JSON: точные параметры (рекомендуется)
 # Оставь пустым "" — тогда путь построится автоматически из имени FILE
-CSV_PATH  = "C:/Users/Madness/PycharmProjects/GRIDBOT/results/grid_opt_BYBIT_DOGEUSDT_LINEAR_2021_2026.csv"
+CSV_PATH  = ""
 JSON_PATH = ""
 
 # Какой источник использовать: "csv" или "json"
-SOURCE = "csv"
+SOURCE = "json"
 
 # Номер строки/записи — None = скрипт спросит при запуске
 ROW = None
 
 # Поиск по score — если задан, игнорирует ROW и ищет строку с ближайшим score
 # Пример: FIND_SCORE = 1679.6830  |  None = не используется
-FIND_SCORE = 5.496077
+FIND_SCORE = None
 
 # Показать таблицу топ-N строк CSV и выйти (True = только просмотр, без графика)
 LIST_ONLY = False
@@ -42,7 +42,7 @@ LIST_TOP_N = 20
 # Капитал и комиссия
 CAPITAL    = 1000.0
 COMMISSION = 0.0018
-REINVEST   = True      # True = реинвестировать прибыль в каждую новую сетку
+REINVEST   = False      # True = реинвестировать прибыль в каждую новую сетку
 
 # Папка для сохранения графика
 OUT_DIR = "results"
@@ -219,7 +219,9 @@ def main():
     print(f"\n  {'═'*50}")
     print(f"  PnL:           {r.total_pnl:+.2f} $")
     print(f"  Max Drawdown:  {r.max_drawdown:.2f} $")
-    print(f"  Сделок:        {r.trade_count}")
+    forced_cnt = sum(1 for t in r.trade_log if t.get("unrealized"))
+    print(f"  Сделок:        {r.trade_count}"  + (f"  (+{forced_cnt} незакрытых)" if forced_cnt else ""))
+    print(f"  Макс. ордеров одновременно: {r.max_orders_filled}")
     print(f"  Ср. время:     {r.avg_trade_minutes:.0f} мин  ({r.avg_trade_minutes/60:.1f} ч)")
     print(f"  Макс. время:   {r.max_trade_minutes:.0f} мин  ({r.max_trade_minutes/60:.1f} ч)")
     print(f"  Win Rate:      {r.win_rate:.1f}%")

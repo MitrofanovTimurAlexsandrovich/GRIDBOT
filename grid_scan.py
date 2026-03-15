@@ -29,12 +29,12 @@ from grid_backtest import GridParams, run_grid_backtest
 # ══════════════════════════════════════════════════════
 #  CONFIG
 # ══════════════════════════════════════════════════════
-FILE       = "/BYBIT_DOGEUSDT_LINEAR_2021_2026.csv"# "C:/Users/Madness/PycharmProjects/Crupto_Data_Joiner/Raw_Data/BYBIT_DOGEUSDT_LINEAR_2021_2026.csv"
+FILE       = "C:/Users/Madness/PycharmProjects/Crupto_Data_Joiner/Raw_Data/BYBIT_DOGEUSDT_LINEAR_2021_2026.csv"
 CAPITAL    = 1000.0
 COMMISSION = 0.0018
 OUT_DIR    = "results"
 
-MIN_N = 5;  MAX_N = 30
+MIN_N = 5;  MAX_N = 40
 TP_MIN = 0.5;  TP_MAX = 10.0;  TP_STEP = 0.1
 GRID_MIN = 10;  GRID_MAX = 90;  GRID_STEP = 1
 MIN_STEP_PCT = 0.1   # минимальный шаг между ордерами
@@ -217,6 +217,7 @@ def main():
         "trade_count", "avg_trade_minutes", "max_trade_minutes",
         "win_rate", "profit_factor", "sharpe",
         "last365_pnl", "last365_trades", "last365_avg_min", "last365_max_min",
+        "max_orders_filled",
     ]
 
     file_exists = os.path.exists(out_path)
@@ -288,6 +289,7 @@ def main():
                         "last365_trades":    s365.get("trades", 0),
                         "last365_avg_min":   round(s365.get("avg_minutes", 0), 1),
                         "last365_max_min":   round(s365.get("max_minutes", 0), 1),
+                        "max_orders_filled": r.max_orders_filled,
                     })
                     csv_file.flush()
 
