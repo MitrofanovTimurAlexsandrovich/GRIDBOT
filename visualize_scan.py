@@ -23,8 +23,8 @@ SCAN_CSV = ""   # пусто = авто из FILE: results/grid_scan_<SYMBOL>.cs
 #   ROW        — номер строки в CSV (0-based), игнорирует FIND_SCORE
 #   FIND_SCORE — ищет строку с ближайшим score
 # Если оба None — показывает таблицу и спрашивает
-ROW        = 0
-FIND_SCORE = None
+ROW        = None
+FIND_SCORE = 0.011993
 
 # Включать строки со score=-999 в таблицу и поиск?
 SHOW_INVALID = True   # True = все строки, False = только score > -999

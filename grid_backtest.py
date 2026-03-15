@@ -291,15 +291,21 @@ def run_grid_backtest(
     closed_trades = [t for t in trade_log if not t.get("unrealized", False)]
     result.trade_count = len(closed_trades)  # переопределяем: только TP-сделки
 
+    # Все сделки включая форсированную — для замера времени
+    all_trades_for_time = trade_log  # включает unrealized для честного MaxMin
+
     if closed_trades:
         pnls      = [t["pnl"] for t in closed_trades]
         wins      = [p for p in pnls if p > 0]
         losses    = [p for p in pnls if p <= 0]
-        durations = [t["duration"] for t in closed_trades]
+        durations_closed = [t["duration"] for t in closed_trades]
 
-        result.win_rate          = len(wins) / len(pnls) * 100
-        result.avg_trade_minutes = float(np.mean(durations))
-        result.max_trade_minutes = float(np.max(durations))
+        result.win_rate      = len(wins) / len(pnls) * 100
+        result.avg_trade_minutes = float(np.mean(durations_closed))
+
+        # max_trade_minutes — по ВСЕМ сделкам включая незакрытую форсированную
+        durations_all = [t["duration"] for t in all_trades_for_time]
+        result.max_trade_minutes = float(np.max(durations_all))
 
         gross_profit = sum(wins)   if wins   else 0.0
         gross_loss   = abs(sum(losses)) if losses else 1e-9
@@ -316,12 +322,16 @@ def run_grid_backtest(
         yearly = {}
         last_365 = {'pnl': 0.0, 'trades': 0, 'duration_sum': 0, 'max_minutes': 0}
 
-        all_trades = [t for t in trade_log if not t.get('unrealized', False)]
-        for t in all_trades:
-            open_ts  = pd.to_datetime(t.get('open_ts', t['timestamp']))
-            close_ts = pd.to_datetime(t['timestamp'])  # timestamp = момент закрытия
+        # PnL/trades/avg — только закрытые по TP
+        # max_minutes — все включая форсированную (честное время зависания)
+        closed_only = [t for t in trade_log if not t.get('unrealized', False)]
+        forced_list = [t for t in trade_log if t.get('unrealized', False)]
 
-            # Годовая статистика — по году ЗАКРЫТИЯ (деньги получены в момент закрытия)
+        for t in closed_only:
+            open_ts  = pd.to_datetime(t.get('open_ts', t['timestamp']))
+            close_ts = pd.to_datetime(t['timestamp'])
+
+            # Годовая статистика — по году ЗАКРЫТИЯ
             yr = close_ts.year
             if yr not in yearly:
                 yearly[yr] = {'pnl': 0.0, 'trades': 0, 'duration_sum': 0, 'max_minutes': 0}
@@ -330,13 +340,25 @@ def run_grid_backtest(
             yearly[yr]['duration_sum'] += t['duration']
             yearly[yr]['max_minutes']   = max(yearly[yr]['max_minutes'], t['duration'])
 
-            # last_365: сделка учитывается если ЗАКРЫЛАСЬ внутри последних 365 дней
-            # (деньги получены в этот период — неважно когда открылась)
+            # last_365: закрылась внутри последних 365 дней
             if close_ts >= cutoff_365:
                 last_365['pnl']          += t['pnl']
                 last_365['trades']       += 1
                 last_365['duration_sum'] += t['duration']
                 last_365['max_minutes']   = max(last_365['max_minutes'], t['duration'])
+
+        # Форсированная сделка — учитываем её duration в max_minutes
+        # для yearly (год открытия) и last_365 (если активна в периоде)
+        for t in forced_list:
+            open_ts  = pd.to_datetime(t.get('open_ts', t['timestamp']))
+            close_ts = pd.to_datetime(t['timestamp'])
+            yr = open_ts.year
+            if yr not in yearly:
+                yearly[yr] = {'pnl': 0.0, 'trades': 0, 'duration_sum': 0, 'max_minutes': 0}
+            yearly[yr]['max_minutes'] = max(yearly[yr]['max_minutes'], t['duration'])
+            # В last_365 по max_minutes если сделка активна в периоде
+            if open_ts <= last_ts and close_ts >= cutoff_365:
+                last_365['max_minutes'] = max(last_365['max_minutes'], t['duration'])
 
         for yr in yearly:
             tr = yearly[yr]['trades']
