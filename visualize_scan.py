@@ -14,7 +14,7 @@ import numpy as np
 # ═════════════════════════════════════════════════════════════════════════════
 
 # Путь к CSV рыночных данных
-FILE = "C:/Users/Madness/PycharmProjects/Crupto_Data_Joiner/Raw_Data/BYBIT_DOGEUSDT_LINEAR_2021_2026.csv"
+FILE = "C:/Users/Madness/PycharmProjects/Crupto_Data_Joiner/Raw_Data/BYBIT_BTCUSDT_LINEAR_2020_2026.csv"
 
 # Путь к CSV результатов grid_scan
 SCAN_CSV = ""   # пусто = авто из FILE: results/grid_scan_<SYMBOL>.csv
@@ -24,7 +24,7 @@ SCAN_CSV = ""   # пусто = авто из FILE: results/grid_scan_<SYMBOL>.cs
 #   FIND_SCORE — ищет строку с ближайшим score
 # Если оба None — показывает таблицу и спрашивает
 ROW        = None
-FIND_SCORE = 0.011993
+FIND_SCORE = None
 
 # Включать строки со score=-999 в таблицу и поиск?
 SHOW_INVALID = True   # True = все строки, False = только score > -999
@@ -34,9 +34,11 @@ LIST_ONLY  = False
 LIST_TOP_N = 30
 
 # Капитал и комиссия
-CAPITAL    = 1000.0
-COMMISSION = 0.0018
-REINVEST   = False      # True = реинвестировать прибыль в каждую новую сетку
+CAPITAL      = 1000.0
+COMMISSION   = 0.0018
+REINVEST     = False        # True = реинвестировать прибыль в каждую новую сетку
+MIN_CONTRACT = 0.0          # минимальный лот в монетах (0 = без ограничений)
+                            # Пример: DOGE=1.0, BTC=0.001, ETH=0.01
 OUT_DIR    = "results"
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -100,14 +102,14 @@ def reconstruct_steps(row: pd.Series, n: int, grid_pct: float) -> list[float]:
 
 
 def reconstruct_sizes(row: pd.Series, n: int, capital: float) -> list[float]:
-    """Восстанавливает размеры по size_type и size_min/size_max."""
+    """Восстанавливает размеры по size_type. Сумма всегда = capital."""
     size_type = str(row.get("size_type", "linear"))
+    size_min  = float(row.get("size_min", 1))
+    size_max  = float(row.get("size_max", capital))
+
     if size_type == "linear":
         weights = [float(i + 1) for i in range(n)]
     elif size_type == "power":
-        # восстанавливаем степень из min/max
-        size_min = float(row["size_min"])
-        size_max = float(row["size_max"])
         if size_min > 0 and size_max > size_min and n > 1:
             power = np.log(size_max / size_min) / np.log(n)
             power = max(1.0, min(4.0, power))
@@ -115,8 +117,6 @@ def reconstruct_sizes(row: pd.Series, n: int, capital: float) -> list[float]:
             power = 2.0
         weights = [(i + 1) ** power for i in range(n)]
     elif size_type == "geometric":
-        size_min = float(row["size_min"])
-        size_max = float(row["size_max"])
         if size_min > 0 and size_max > size_min and n > 1:
             r = (size_max / size_min) ** (1.0 / (n - 1))
             r = max(1.01, min(5.0, r))
@@ -126,6 +126,7 @@ def reconstruct_sizes(row: pd.Series, n: int, capital: float) -> list[float]:
     else:  # random_mono или неизвестный
         weights = [float(i + 1) for i in range(n)]
 
+    # Всегда нормируем на capital — сумма ордеров = 100% капитала
     total = sum(weights)
     return [round(w / total * capital, 4) for w in weights]
 
@@ -164,7 +165,7 @@ def run_and_plot(row: pd.Series, df_market: pd.DataFrame, symbol: str, score_tag
 
     gp = GridParams(n_orders=n, steps=steps, sizes=sizes, tp_pct=tp_pct)
     print("\n  Запуск бэктеста...")
-    r = run_grid_backtest(df_market, gp, commission=COMMISSION, initial_capital=CAPITAL, reinvest=REINVEST)
+    r = run_grid_backtest(df_market, gp, commission=COMMISSION, initial_capital=CAPITAL, reinvest=REINVEST, min_contract=MIN_CONTRACT)
 
     print(f"\n  {'═'*52}")
     print(f"  PnL:           {r.total_pnl:+.2f} $")
@@ -193,6 +194,28 @@ def run_and_plot(row: pd.Series, df_market: pd.DataFrame, symbol: str, score_tag
     save_p = os.path.join(OUT_DIR, f"grid_scan_viz_{symbol}_{score_tag}.png")
     plot_best_result(r, params, df_market, symbol=symbol, save_path=save_p)
     print(f"  График: {save_p}")
+
+    # ── Распечатка точных параметров каждого ордера ───────────────────────────
+    print(f"\n  {'═'*60}")
+    print(f"  Параметры ордеров для ввода в торговый сервис")
+    print(f"  N={params['n_orders']}  TP={params['tp_pct']:.4f}%  Capital={CAPITAL}$  MinLot={MIN_CONTRACT}")
+    print(f"  {'═'*60}")
+    print(f"  {'Ордер':>6}  {'От входа %':>12}  {'Размер $':>10}  {'Доля %':>8}")
+    print(f"  {'─'*6}  {'─'*12}  {'─'*10}  {'─'*8}")
+    cum = 0.0
+    for i, (step, size) in enumerate(zip(params['steps'], params['sizes'])):
+        share = size / CAPITAL * 100
+        if i == 0:
+            print(f"  {i+1:>6}  {'0.0000':>11}%  {size:>10.2f}$  {share:>7.2f}%  <- рыночный (немедленно)")
+        else:
+            cum += step
+            print(f"  {i+1:>6}  {cum:>11.4f}%  {size:>10.2f}$  {share:>7.2f}%")
+    total_size = sum(params['sizes'])
+    total_share = total_size / CAPITAL * 100
+    print(f"  {'─'*6}  {'─'*12}  {'─'*10}  {'─'*8}")
+    print(f"  {'ИТОГО':>6}  {cum:>11.4f}%  {total_size:>10.2f}$  {total_share:>7.2f}%")
+    print(f"  TP от средней цены входа: +{params['tp_pct']:.4f}%")
+    print(f"  {'═'*60}\n")
 
 
 def main():

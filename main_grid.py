@@ -24,7 +24,7 @@ from grid_visualizer import plot_best_result, plot_heatmap
 # ═════════════════════════════════════════════════════════════════════════════
 
 # Путь к CSV с 1-минутными данными (timestamp, open, high, low, close, volume)
-FILE = "C:/Users/Madness/PycharmProjects/Crupto_Data_Joiner/Raw_Data/BYBIT_DOGEUSDT_LINEAR_2021_2026.csv"
+FILE = "/BYBIT_DOGEUSDT_LINEAR_2021_2026.csv"
 
 # Название монеты (используется в именах файлов и заголовках графиков)
 # Оставь пустым "" — тогда возьмётся автоматически из имени файла
@@ -38,7 +38,27 @@ ITERS = 3000
 CAPITAL = 1000.0
 
 # Комиссия Bybit (taker): 0.0006 = 0.06%
-COMMISSION = 0.0018   # 0.18% — taker fee Bybit
+COMMISSION   = 0.0018   # 0.18% — taker fee Bybit
+REINVEST     = False    # True = реинвестировать прибыль в каждую новую сетку
+
+# Минимальный лот в монетах (0 = без ограничений)
+# Пример: DOGE=1.0, BTC=0.001, ETH=0.01
+MIN_CONTRACT = 1
+
+# Список допустимых тейк-профитов (%).
+# Только эти значения будут проверяться оптимизатором.
+# Пример: TP_LIST = [0.5, 1.0, 1.5, 2.0, 3.0, 5.0]
+TP_LIST = [0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1, 1.05, 1.1, 1.15, 1.2, 1.25, 1.3, 1.35, 1.4, 1.45, 1.5, 1.55, 1.6, 1.65, 1.7, 1.75, 1.8, 1.85, 1.9, 1.95, 2, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]  # 0.5..10.0 шаг 0.5
+
+# Пространство поиска параметров сетки
+SEARCH_SPACE = {
+    "n_orders":  (5,   10),      # диапазон количества ордеров (целое)
+    "step_min":  (0.1, 10),     # % минимальный шаг ордера
+    "step_max":  (0.3, 10),     # % максимальный шаг ордера
+    "size_min":  (5.0, 100),    # USDT минимальный размер ордера
+    "size_max":  (20.0, 500.0),  # USDT максимальный размер ордера
+    # tp_pct не нужен — используется TP_LIST выше
+}
 
 # Таймфрейм данных в минутах (1 = не ресемплировать, рекомендуется)
 TF_MINUTES = 1
@@ -48,9 +68,6 @@ TOP_N = 20
 
 # Папка для сохранения результатов (CSV, JSON, PNG)
 OUT_DIR = "results"
-
-# Минимальное количество ордеров в сетке (включая рыночный)
-MIN_ORDERS = 5
 
 # Random seed для воспроизводимости (None = каждый раз новый прогон)
 SEED = None
@@ -183,10 +200,12 @@ def main():
         top_n           = TOP_N,
         print_every     = 100,
         seed            = SEED,
-        min_orders      = MIN_ORDERS,
         elite_frac      = 0.05,
         narrow_every    = 400,
         narrow_shrink   = 0.35,
+        min_contract    = MIN_CONTRACT,
+        tp_list         = TP_LIST,
+        search_space    = SEARCH_SPACE,
     )
 
     if df_results.empty:
@@ -208,14 +227,16 @@ def main():
 
     if best_params:
         gp = GridParams(
-            n_orders = best_params["n_orders"],
-            steps    = best_params["steps"],
-            sizes    = best_params["sizes"],
-            tp_pct   = best_params["tp_pct"],
+            n_orders     = best_params["n_orders"],
+            steps        = best_params["steps"],
+            sizes        = best_params["sizes"],
+            tp_pct       = best_params["tp_pct"],
+            min_contract = MIN_CONTRACT,
         )
         print("\n  Строим финальный бэктест лучшей конфигурации...")
         best_result = run_grid_backtest(df, gp, commission=COMMISSION,
-                                        initial_capital=CAPITAL)
+                                        initial_capital=CAPITAL, reinvest=REINVEST,
+                                        min_contract=MIN_CONTRACT)
 
         plot_best_result(
             best_result, best_params, df,

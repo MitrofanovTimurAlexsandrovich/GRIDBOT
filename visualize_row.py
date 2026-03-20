@@ -22,18 +22,18 @@ FILE = "C:/Users/Madness/PycharmProjects/Crupto_Data_Joiner/Raw_Data/BYBIT_DOGEU
 # CSV: результаты оптимизации (шаги/размеры для random-режимов могут не совпасть)
 # JSON: точные параметры (рекомендуется)
 # Оставь пустым "" — тогда путь построится автоматически из имени FILE
-CSV_PATH  = ""
+CSV_PATH  = "C:/Users/Madness/PycharmProjects/GRIDBOT/results/grid_opt_BYBIT_DOGEUSDT_LINEAR_2021_2026.csv"
 JSON_PATH = ""
 
 # Какой источник использовать: "csv" или "json"
-SOURCE = "json"
+SOURCE = "csv"
 
 # Номер строки/записи — None = скрипт спросит при запуске
 ROW = None
 
 # Поиск по score — если задан, игнорирует ROW и ищет строку с ближайшим score
 # Пример: FIND_SCORE = 1679.6830  |  None = не используется
-FIND_SCORE = None
+FIND_SCORE = 4.1389
 
 # Показать таблицу топ-N строк CSV и выйти (True = только просмотр, без графика)
 LIST_ONLY = False
@@ -101,7 +101,11 @@ def params_from_csv_row(csv_path: str, row_idx: int) -> dict:
     import random
     random.seed(42)
     steps = _generate_steps(n, step_min, step_max, step_mode)
-    sizes = _generate_sizes(n, size_min, size_max, size_mode)
+    raw_sizes = _generate_sizes(n, size_min, size_max, size_mode)
+
+    # Нормируем на CAPITAL — сумма ордеров всегда = 100% капитала
+    total_sz = sum(raw_sizes)
+    sizes = [round(s / total_sz * CAPITAL, 4) for s in raw_sizes] if total_sz > 0 else raw_sizes
 
     if "random" in (step_mode, size_mode):
         print("  Режим random — шаги/размеры могут отличаться от оригинала.")
@@ -246,6 +250,28 @@ def main():
     save_p = os.path.join(OUT_DIR, f"grid_viz_{symbol}_{tag}.png")
     plot_best_result(r, params, df, symbol=symbol, save_path=save_p)
     print(f"  График: {save_p}")
+
+    # ── Распечатка точных параметров каждого ордера ───────────────────────────
+    print(f"\n  {'═'*60}")
+    print(f"  Параметры ордеров для ввода в торговый сервис")
+    print(f"  N={params['n_orders']}  TP={params['tp_pct']:.4f}%  Capital={CAPITAL}$")
+    print(f"  {'═'*60}")
+    print(f"  {'Ордер':>6}  {'От входа %':>12}  {'Размер $':>10}  {'Доля %':>8}")
+    print(f"  {'─'*6}  {'─'*12}  {'─'*10}  {'─'*8}")
+    cum = 0.0
+    for i, (step, size) in enumerate(zip(params['steps'], params['sizes'])):
+        share = size / CAPITAL * 100
+        if i == 0:
+            print(f"  {i+1:>6}  {'0.0000':>11}%  {size:>10.2f}$  {share:>7.2f}%  <- рыночный (немедленно)")
+        else:
+            cum += step
+            print(f"  {i+1:>6}  {cum:>11.4f}%  {size:>10.2f}$  {share:>7.2f}%")
+    total_size = sum(params['sizes'])
+    total_share = total_size / CAPITAL * 100
+    print(f"  {'─'*6}  {'─'*12}  {'─'*10}  {'─'*8}")
+    print(f"  {'ИТОГО':>6}  {cum:>11.4f}%  {total_size:>10.2f}$  {total_share:>7.2f}%")
+    print(f"  TP от средней цены входа: +{params['tp_pct']:.4f}%")
+    print(f"  {'═'*60}\n")
 
 
 if __name__ == "__main__":

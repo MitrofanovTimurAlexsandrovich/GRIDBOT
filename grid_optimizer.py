@@ -34,13 +34,15 @@ from grid_backtest import GridParams, BacktestResult, run_grid_backtest, compute
 # Пространство поиска
 # ─────────────────────────────────────────────────────────────────────────────
 
-SEARCH_SPACE = {
-    "n_orders":  (1,   40),       # целое
+# Пространство поиска по умолчанию (переопределяется из main_grid.py)
+# tp_pct убран — теперь задаётся списком TP_LIST в main_grid.py
+DEFAULT_SEARCH_SPACE = {
+    "n_orders":  (5,   30),       # целое — диапазон количества ордеров
     "step_min":  (0.1, 2.0),      # % минимальный шаг ордера
     "step_max":  (0.3, 8.0),      # % максимальный шаг ордера
     "size_min":  (5.0, 50.0),     # USDT минимальный размер ордера
     "size_max":  (20.0, 500.0),   # USDT максимальный размер ордера
-    "tp_pct":    (0.3, 8.0),      # % тейк-профита
+    "tp_pct":    (0.3, 8.0),      # используется только если TP_LIST=None
 }
 
 # Режимы распределения шагов ордеров
@@ -113,10 +115,10 @@ def _generate_sizes(n: int, size_min: float, size_max: float, mode: str) -> List
         return [round(random.uniform(size_min, size_max), 2) for _ in range(n)]
 
 
-def sample_params(space: dict = None) -> dict:
+def sample_params(space: dict = None, tp_list: list = None, capital: float = 1000.0) -> dict:
     """Генерирует случайный набор параметров."""
     if space is None:
-        space = SEARCH_SPACE
+        space = DEFAULT_SEARCH_SPACE
 
     n_orders  = random.randint(int(space["n_orders"][0]), int(space["n_orders"][1]))
     step_min  = round(random.uniform(*space["step_min"]), 3)
@@ -131,12 +133,21 @@ def sample_params(space: dict = None) -> dict:
         size_min, size_max = size_max, size_min
     size_max = max(size_max, size_min + 1.0)
 
-    tp_pct    = round(random.uniform(*space["tp_pct"]), 3)
+    # TP: из списка или случайно из диапазона
+    if tp_list:
+        tp_pct = random.choice(tp_list)
+    else:
+        tp_pct = round(random.uniform(*space["tp_pct"]), 3)
+
     step_mode = random.choice(STEP_MODES)
     size_mode = random.choice(SIZE_MODES)
 
     steps = _generate_steps(n_orders, step_min, step_max, step_mode)
-    sizes = _generate_sizes(n_orders, size_min, size_max, size_mode)
+    raw_sizes = _generate_sizes(n_orders, size_min, size_max, size_mode)
+
+    # Нормируем sizes на capital — сумма ордеров = 100% капитала
+    total_sz = sum(raw_sizes)
+    sizes = [round(s / total_sz * capital, 4) for s in raw_sizes] if total_sz > 0 else raw_sizes
 
     return {
         "n_orders":  n_orders,
@@ -145,20 +156,20 @@ def sample_params(space: dict = None) -> dict:
         "tp_pct":    tp_pct,
         "step_mode": step_mode,
         "size_mode": size_mode,
-        # сохраняем диапазоны для логирования
         "step_min":  step_min,
         "step_max":  step_max,
-        "size_min":  size_min,
-        "size_max":  size_max,
+        "size_min":  round(min(sizes), 2),
+        "size_max":  round(max(sizes), 2),
     }
 
 
-def params_to_grid(p: dict) -> GridParams:
+def params_to_grid(p: dict, min_contract: float = 0.0) -> GridParams:
     return GridParams(
-        n_orders = p["n_orders"],
-        steps    = p["steps"],
-        sizes    = p["sizes"],
-        tp_pct   = p["tp_pct"],
+        n_orders     = p["n_orders"],
+        steps        = p["steps"],
+        sizes        = p["sizes"],
+        tp_pct       = p["tp_pct"],
+        min_contract = min_contract,
     )
 
 
@@ -216,10 +227,12 @@ def optimize(
     top_n:        int   = 20,
     print_every:  int   = 100,
     seed:         int   = None,
-    min_orders:   int   = 1,      # минимальное кол-во ордеров в сетке
-    elite_frac:   float = 0.05,   # доля лучших для сужения пространства
-    narrow_every: int   = 300,    # каждые N итераций сужаем пространство
-    narrow_shrink: float = 0.3,   # насколько сильно сужать
+    elite_frac:   float = 0.05,
+    narrow_every: int   = 300,
+    narrow_shrink: float = 0.3,
+    min_contract: float = 0.0,
+    tp_list:      list  = None,
+    search_space: dict  = None,   # пространство поиска из main_grid.py
 ) -> pd.DataFrame:
     """
     Random Search + Elite Guided Narrowing.
@@ -231,9 +244,10 @@ def optimize(
         random.seed(seed)
         np.random.seed(seed)
 
-    space   = deepcopy(SEARCH_SPACE)
-    space["n_orders"] = (max(min_orders, int(SEARCH_SPACE["n_orders"][0])),
-                          int(SEARCH_SPACE["n_orders"][1]))
+    space = deepcopy(search_space if search_space else DEFAULT_SEARCH_SPACE)
+    # Если TP_LIST задан — убираем tp_pct из пространства (не нужен)
+    if tp_list and "tp_pct" in space:
+        del space["tp_pct"]
     results = []
     best    = None
     best_score = -999.0
@@ -243,6 +257,10 @@ def optimize(
     print(f"  Grid Long Strategy Optimizer")
     print(f"  Итераций: {n_iter}  |  Данных: {len(df)} баров")
     print(f"  Период: {df['timestamp'].iloc[0]} → {df['timestamp'].iloc[-1]}")
+    if min_contract > 0:
+        print(f"  MIN_CONTRACT: {min_contract} монет")
+    if tp_list:
+        print(f"  TP_LIST: {len(tp_list)} значений — {tp_list}")
     print(f"{'═'*60}\n")
 
     for idx in range(1, n_iter + 1):
@@ -254,16 +272,23 @@ def optimize(
                 k       = max(1, int(len(valid) * elite_frac))
                 top_res = sorted(valid, key=lambda x: x["score"], reverse=True)[:k]
                 elite   = [r["params"] for r in top_res]
-                space   = narrow_space(elite, SEARCH_SPACE, shrink=narrow_shrink)
+                # Сужаем вокруг текущего space (не глобального — он уже кастомный)
+                base    = search_space if search_space else DEFAULT_SEARCH_SPACE
+                space   = narrow_space(elite, deepcopy(base), shrink=narrow_shrink)
+                # Если TP_LIST задан — убираем tp_pct из суженного пространства
+                if tp_list and 'tp_pct' in space:
+                    del space['tp_pct']
                 print(f"  [iter {idx}] Пространство сужено. n_orders: {space['n_orders']}, "
                       f"tp_pct: {space['tp_pct']}, step: {space['step_min']}..{space['step_max']}")
 
         # ── Генерация и бэктест ───────────────────────────────────────────────
-        p = sample_params(space)
-        gp = params_to_grid(p)
+        p = sample_params(space, tp_list=tp_list, capital=initial_capital)
+        gp = params_to_grid(p, min_contract=min_contract)
 
         try:
-            r = run_grid_backtest(df, gp, commission=commission, initial_capital=initial_capital)
+            r = run_grid_backtest(df, gp, commission=commission,
+                                  initial_capital=initial_capital,
+                                  min_contract=min_contract)
             s = r.score
         except Exception as e:
             s = -999.0

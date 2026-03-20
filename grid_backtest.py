@@ -38,6 +38,7 @@ class GridParams:
     steps:       List[float]       # шаги каждого ордера в % (длина = n_orders)
     sizes:       List[float]       # размер каждого ордера в USDT (длина = n_orders)
     tp_pct:      float             # % тейк-профита от avg_entry
+    min_contract: float = 0.0     # минимальный лот в монетах (0 = без ограничений)
 
     def validate(self) -> bool:
         if self.n_orders < 1 or self.n_orders > 40:
@@ -91,6 +92,7 @@ def run_grid_backtest(
     commission: float = 0.0018,   # 0.18% — taker fee Bybit
     initial_capital: float = 1000.0,
     reinvest: bool = False,        # реинвестировать прибыль в каждую новую сетку
+    min_contract: float = 0.0,    # минимальный лот в монетах (0 = без ограничений)
 ) -> BacktestResult:
     """
     Запускает бэктест лонговой сетки на 1-минутных данных.
@@ -138,6 +140,16 @@ def run_grid_backtest(
     def _calc_tp(avg_entry: float) -> float:
         return avg_entry * (1.0 + params.tp_pct / 100.0)
 
+    # Хелпер: округляет qty ВНИЗ до кратного min_contract
+    # floor — чтобы не тратить больше денег чем запланировано
+    # Если qty < min_contract — возвращает 0 (ордер пропускается)
+    _min_lot = min_contract if min_contract > 0 else 0.0
+    def _round_qty(qty: float) -> float:
+        if _min_lot <= 0:
+            return qty
+        import math
+        return math.floor(qty / _min_lot) * _min_lot
+
     # ── Главный цикл ──────────────────────────────────────────────────────────
     i = 0
     while i < n_bars:
@@ -162,24 +174,30 @@ def run_grid_backtest(
             scaled_sizes   = [s / total_sizes * grid_capital for s in params.sizes]
 
             # ── Ордер 0: рыночное исполнение по текущей цене ─────────────────
-            market_qty     = scaled_sizes[0] / bar_close
-            market_fee     = scaled_sizes[0] * commission
-            position_qty  += market_qty
-            position_cost += scaled_sizes[0] + market_fee
-            equity        -= market_fee
-            order_filled[0] = True
+            market_qty     = _round_qty(scaled_sizes[0] / bar_close)
+            if market_qty > 0:
+                market_cost    = market_qty * bar_close
+                market_fee     = market_cost * commission
+                position_qty  += market_qty
+                position_cost += market_cost + market_fee
+                equity        -= (market_cost - scaled_sizes[0])  # компенсируем разницу от округления
+                equity        -= market_fee
+            order_filled[0] = True  # помечаем исполненным даже если qty=0 (слишком мал)
 
         # ── Проверяем исполнение лимитных ордеров 1..N (цена падает к уровню) ─
         if in_position:
             for j in range(1, params.n_orders):  # j=0 уже исполнен рыночно
                 if not order_filled[j] and bar_low <= grid_levels[j]:
-                    fill_price     = grid_levels[j]
-                    qty            = scaled_sizes[j] / fill_price
-                    fee            = scaled_sizes[j] * commission
-                    position_qty  += qty
-                    position_cost += scaled_sizes[j] + fee
-                    equity        -= fee
+                    fill_price = grid_levels[j]
+                    qty        = _round_qty(scaled_sizes[j] / fill_price)
                     order_filled[j] = True
+                    if qty <= 0:
+                        continue  # ордер слишком мал для min_contract — пропускаем
+                    real_cost      = qty * fill_price
+                    fee            = real_cost * commission
+                    position_qty  += qty
+                    position_cost += real_cost + fee
+                    equity        -= fee
 
             # Пересчитываем TP если хотя бы один ордер заполнен
             if position_qty > 0:
