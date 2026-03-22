@@ -56,63 +56,55 @@ SIZE_MODES  = ["flat", "linear_increase", "geometric_increase", "pyramid", "rand
 # Генерация параметров
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _r01(v: float) -> float:
+    """Округляет до шага 0.01."""
+    return round(round(v / 0.01) * 0.01, 2)
+
+
 def _generate_steps(n: int, step_min: float, step_max: float, mode: str) -> List[float]:
-    """Генерирует список индивидуальных шагов для N ордеров."""
+    """Генерирует список индивидуальных шагов для N ордеров. Шаг дискретности 0.01%."""
     if n == 1:
-        return [round(random.uniform(step_min, step_max), 3)]
+        return [_r01(random.uniform(step_min, step_max))]
 
     if mode == "linear":
-        # Равномерно распределённые шаги
-        return [round(step_min + (step_max - step_min) * i / (n - 1), 3) for i in range(n)]
+        return [_r01(step_min + (step_max - step_min) * i / (n - 1)) for i in range(n)]
 
     elif mode == "geometric":
-        # Геометрически растущие шаги
         ratio = (step_max / max(step_min, 0.01)) ** (1.0 / (n - 1))
-        return [round(step_min * (ratio ** i), 3) for i in range(n)]
+        return [_r01(step_min * (ratio ** i)) for i in range(n)]
 
     elif mode == "front_heavy":
-        # Большие шаги в начале (первые ордера ближе)
-        steps = [round(step_max - (step_max - step_min) * i / (n - 1), 3) for i in range(n)]
-        return steps
+        return [_r01(step_max - (step_max - step_min) * i / (n - 1)) for i in range(n)]
 
     elif mode == "back_heavy":
-        # Маленькие шаги в начале, большие в конце
-        steps = [round(step_min + (step_max - step_min) * (i / (n - 1)) ** 2, 3) for i in range(n)]
-        return steps
+        return [_r01(step_min + (step_max - step_min) * (i / (n - 1)) ** 2) for i in range(n)]
 
     else:  # random
-        return [round(random.uniform(step_min, step_max), 3) for _ in range(n)]
+        return [_r01(random.uniform(step_min, step_max)) for _ in range(n)]
 
 
 def _generate_sizes(n: int, size_min: float, size_max: float, mode: str) -> List[float]:
-    """Генерирует список индивидуальных размеров для N ордеров."""
+    """Генерирует список индивидуальных размеров для N ордеров. Шаг дискретности 0.01$."""
     if n == 1:
-        return [round(random.uniform(size_min, size_max), 2)]
+        return [_r01(random.uniform(size_min, size_max))]
 
     if mode == "flat":
-        base = round(random.uniform(size_min, size_max), 2)
-        return [base] * n
+        return [_r01(random.uniform(size_min, size_max))] * n
 
     elif mode == "linear_increase":
-        # Нижние ордера (дальше от цены) — крупнее (мартингейл-лайт)
-        return [round(size_min + (size_max - size_min) * i / (n - 1), 2) for i in range(n)]
+        return [_r01(size_min + (size_max - size_min) * i / (n - 1)) for i in range(n)]
 
     elif mode == "geometric_increase":
         ratio = (size_max / max(size_min, 1.0)) ** (1.0 / (n - 1))
-        return [round(size_min * (ratio ** i), 2) for i in range(n)]
+        return [_r01(size_min * (ratio ** i)) for i in range(n)]
 
     elif mode == "pyramid":
-        # Середина сетки — самые крупные ордера
         half = n // 2
-        sizes = []
-        for i in range(n):
-            dist = abs(i - half) / max(half, 1)
-            s = size_max - (size_max - size_min) * dist
-            sizes.append(round(s, 2))
-        return sizes
+        return [_r01(size_max - (size_max - size_min) * abs(i - half) / max(half, 1))
+                for i in range(n)]
 
     else:  # random
-        return [round(random.uniform(size_min, size_max), 2) for _ in range(n)]
+        return [_r01(random.uniform(size_min, size_max)) for _ in range(n)]
 
 
 def sample_params(space: dict = None, tp_list: list = None, capital: float = 1000.0) -> dict:
@@ -121,17 +113,20 @@ def sample_params(space: dict = None, tp_list: list = None, capital: float = 100
         space = DEFAULT_SEARCH_SPACE
 
     n_orders  = random.randint(int(space["n_orders"][0]), int(space["n_orders"][1]))
-    step_min  = round(random.uniform(*space["step_min"]), 3)
-    step_max  = round(random.uniform(*space["step_max"]), 3)
+
+    # Шаги: дискретность 0.01%
+    step_min  = round(round(random.uniform(*space["step_min"]) / 0.01) * 0.01, 2)
+    step_max  = round(round(random.uniform(*space["step_max"]) / 0.01) * 0.01, 2)
     if step_max < step_min:
         step_min, step_max = step_max, step_min
-    step_max = max(step_max, step_min + 0.05)
+    step_max = max(step_max, step_min + 0.01)
 
-    size_min  = round(random.uniform(*space["size_min"]), 2)
-    size_max  = round(random.uniform(*space["size_max"]), 2)
+    # Размеры: дискретность 0.01$
+    size_min  = round(round(random.uniform(*space["size_min"]) / 0.01) * 0.01, 2)
+    size_max  = round(round(random.uniform(*space["size_max"]) / 0.01) * 0.01, 2)
     if size_max < size_min:
         size_min, size_max = size_max, size_min
-    size_max = max(size_max, size_min + 1.0)
+    size_max = max(size_max, size_min + 0.01)
 
     # TP: из списка или случайно из диапазона
     if tp_list:
@@ -202,7 +197,8 @@ def narrow_space(elite_params: list, base_space: dict, shrink: float = 0.5) -> d
         new_hi = min(hi, center + half_range)
         if new_hi - new_lo < 0.01:
             new_hi = new_lo + 0.01
-        new_space[key] = (round(new_lo, 4), round(new_hi, 4))
+        new_space[key] = (round(round(new_lo / 0.01) * 0.01, 2),
+                          round(round(new_hi / 0.01) * 0.01, 2))
 
     # n_orders — сужаем около медианы
     n_vals = [p["n_orders"] for p in elite_params]
