@@ -290,7 +290,10 @@ def optimize(
         # Отбраковка конфигов где большинство ордеров дадут qty=0
         if min_contract > 0:
             median_price = float(df['close'].median())
-            viable = gp.count_viable_orders(median_price)
+            viable = sum(
+                1 for size in gp.sizes
+                if (size / median_price) >= min_contract
+            )
             if viable < max(1, p['n_orders'] // 2):
                 results.append({"score": -999.0, "total_pnl": 0,
                                 "max_drawdown": 0, "sharpe": 0,
