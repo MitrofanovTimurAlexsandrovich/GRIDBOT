@@ -191,6 +191,8 @@ def narrow_space(elite_params: list, base_space: dict, shrink: float = 0.5) -> d
         vals = [p[key] for p in elite_params if key in p]
         if not vals:
             continue
+        if key not in base_space:
+            continue  # tp_pct отсутствует когда используется TP_LIST — пропускаем
         lo, hi = base_space[key]
         elite_lo = min(vals)
         elite_hi = max(vals)
@@ -284,6 +286,21 @@ def optimize(
         # ── Генерация и бэктест ───────────────────────────────────────────────
         p = sample_params(space, tp_list=tp_list, capital=initial_capital)
         gp = params_to_grid(p, min_contract=min_contract)
+
+        # Отбраковка конфигов где большинство ордеров дадут qty=0
+        if min_contract > 0:
+            median_price = float(df['close'].median())
+            viable = gp.count_viable_orders(median_price)
+            if viable < max(1, p['n_orders'] // 2):
+                results.append({"score": -999.0, "total_pnl": 0,
+                                "max_drawdown": 0, "sharpe": 0,
+                                "win_rate": 0, "profit_factor": 0,
+                                "trade_count": 0, "avg_trade_minutes": 0,
+                                "max_trade_minutes": 0, "params": p,
+                                **{k: p.get(k, 0) for k in
+                                   ['n_orders','tp_pct','step_min','step_max',
+                                    'step_mode','size_min','size_max','size_mode']}})
+                continue
 
         try:
             r = run_grid_backtest(df, gp, commission=commission,
