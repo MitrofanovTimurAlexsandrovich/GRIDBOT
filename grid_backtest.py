@@ -226,7 +226,9 @@ def run_grid_backtest(
                     equity        -= fee
 
             # Пересчитываем TP и проверяем — возможно несколько раз на одной свече
-            while in_position and position_qty > 0:
+            MAX_REOPENS_PER_BAR = 10  # защита от бесконечного цикла
+            reopens = 0
+            while in_position and position_qty > 0 and reopens <= MAX_REOPENS_PER_BAR:
                 avg_entry = position_cost / position_qty
                 tp_price  = _calc_tp(avg_entry)
 
@@ -265,6 +267,7 @@ def run_grid_backtest(
 
                 # ── Немедленно переоткрываем сетку по цене закрытия (tp_price) ─
                 # на той же свече — без перехода к следующему бару
+                reopens      += 1
                 reopen_price  = tp_price
                 grid_levels   = _setup_grid(reopen_price)
                 order_filled  = [False] * params.n_orders
