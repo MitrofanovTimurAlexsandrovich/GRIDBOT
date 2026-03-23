@@ -277,7 +277,8 @@ def optimize(
                 if tp_list and 'tp_pct' in space:
                     del space['tp_pct']
                 print(f"  [iter {idx}] Пространство сужено. n_orders: {space['n_orders']}, "
-                      f"tp_pct: {space['tp_pct']}, step: {space['step_min']}..{space['step_max']}")
+                      f"tp_pct: {space['tp_pct'] if 'tp_pct' in space else f'список {len(tp_list)} значений'}, "
+                      f"step: {space['step_min']}..{space['step_max']}")
 
         # ── Генерация и бэктест ───────────────────────────────────────────────
         p = sample_params(space, tp_list=tp_list, capital=initial_capital)

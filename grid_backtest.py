@@ -55,6 +55,32 @@ class GridParams:
             return False
         return True
 
+    def min_viable_price(self) -> float:
+        """
+        Минимальная цена актива при которой хотя бы первый ордер
+        исполнится (qty >= min_contract).
+        Используется для ранней отбраковки конфигураций.
+        """
+        if self.min_contract <= 0:
+            return 0.0
+        # Первый ордер (рыночный) — самый маленький
+        return self.sizes[0] / self.min_contract
+
+    def count_viable_orders(self, price: float) -> int:
+        """
+        Считает сколько ордеров дадут qty >= min_contract при данной цене.
+        Используется для отбраковки: если мало ордеров — конфиг бесполезен.
+        """
+        if self.min_contract <= 0 or price <= 0:
+            return self.n_orders
+        import math
+        count = 0
+        for size in self.sizes:
+            qty = math.floor(size / price / self.min_contract) * self.min_contract
+            if qty >= self.min_contract:
+                count += 1
+        return count
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Результаты бэктеста
@@ -192,52 +218,92 @@ def run_grid_backtest(
                     qty        = _round_qty(scaled_sizes[j] / fill_price)
                     order_filled[j] = True
                     if qty <= 0:
-                        continue  # ордер слишком мал для min_contract — пропускаем
+                        continue
                     real_cost      = qty * fill_price
                     fee            = real_cost * commission
                     position_qty  += qty
                     position_cost += real_cost + fee
                     equity        -= fee
 
-            # Пересчитываем TP если хотя бы один ордер заполнен
-            if position_qty > 0:
+            # Пересчитываем TP и проверяем — возможно несколько раз на одной свече
+            while in_position and position_qty > 0:
                 avg_entry = position_cost / position_qty
                 tp_price  = _calc_tp(avg_entry)
 
-                # ── Проверяем TP ──────────────────────────────────────────────
-                if bar_high >= tp_price:
-                    # Закрываем всю позицию по TP
-                    close_value = position_qty * tp_price
-                    fee_close   = close_value * commission
-                    trade_pnl   = close_value - position_cost - fee_close
-                    closed_pnl += trade_pnl
-                    equity     += trade_pnl
+                if bar_high < tp_price:
+                    break  # TP не достигнут — выходим из while
 
-                    duration_min = i - first_fill_bar
+                # ── Закрываем позицию по TP ───────────────────────────────────
+                close_value = position_qty * tp_price
+                fee_close   = close_value * commission
+                trade_pnl   = close_value - position_cost - fee_close
+                closed_pnl += trade_pnl
+                equity     += trade_pnl
 
-                    orders_now = sum(order_filled)
-                    if orders_now > max_orders_hit:
-                        max_orders_hit = orders_now
-                    trade_log.append({
-                        "open_bar":    first_fill_bar,
-                        "close_bar":   i,
-                        "duration":    duration_min,
-                        "orders_hit":  orders_now,
-                        "avg_entry":   position_cost / position_qty,
-                        "tp_price":    tp_price,
-                        "pnl":         trade_pnl,
-                        "timestamp":   df["timestamp"].iloc[i] if "timestamp" in df.columns else i,
-                        "open_ts":     df["timestamp"].iloc[first_fill_bar] if "timestamp" in df.columns else first_fill_bar,
-                    })
+                duration_min = i - first_fill_bar
 
-                    # Просадка
-                    if equity > peak_equity:
-                        peak_equity = equity
-                    dd = peak_equity - equity
-                    if dd > max_dd:
-                        max_dd = dd
+                orders_now = sum(order_filled)
+                if orders_now > max_orders_hit:
+                    max_orders_hit = orders_now
+                trade_log.append({
+                    "open_bar":    first_fill_bar,
+                    "close_bar":   i,
+                    "duration":    duration_min,
+                    "orders_hit":  orders_now,
+                    "avg_entry":   position_cost / position_qty,
+                    "tp_price":    tp_price,
+                    "pnl":         trade_pnl,
+                    "timestamp":   df["timestamp"].iloc[i] if "timestamp" in df.columns else i,
+                    "open_ts":     df["timestamp"].iloc[first_fill_bar] if "timestamp" in df.columns else first_fill_bar,
+                })
 
-                    in_position = False
+                if equity > peak_equity:
+                    peak_equity = equity
+                dd = peak_equity - equity
+                if dd > max_dd:
+                    max_dd = dd
+
+                # ── Немедленно переоткрываем сетку по цене закрытия (tp_price) ─
+                # на той же свече — без перехода к следующему бару
+                reopen_price  = tp_price
+                grid_levels   = _setup_grid(reopen_price)
+                order_filled  = [False] * params.n_orders
+                position_qty  = 0.0
+                position_cost = 0.0
+                first_fill_bar = i
+
+                total_sizes  = sum(params.sizes)
+                grid_capital = equity if reinvest else initial_capital
+                scaled_sizes = [s / total_sizes * grid_capital for s in params.sizes]
+
+                # Ордер 0 — рыночный по цене переоткрытия (= tp_price)
+                market_qty = _round_qty(scaled_sizes[0] / reopen_price)
+                if market_qty > 0:
+                    market_cost    = market_qty * reopen_price
+                    market_fee     = market_cost * commission
+                    position_qty  += market_qty
+                    position_cost += market_cost + market_fee
+                    equity        -= (market_cost - scaled_sizes[0])
+                    equity        -= market_fee
+                order_filled[0] = True
+
+                # Остальные лимитные ордера на этой же свече уже не могут
+                # исполниться — цена переоткрытия выше, bar_low уже известен.
+                # Проверяем только те уровни которые ниже bar_low (не коснулись)
+                for j in range(1, params.n_orders):
+                    if bar_low <= grid_levels[j]:
+                        fill_price = grid_levels[j]
+                        qty        = _round_qty(scaled_sizes[j] / fill_price)
+                        order_filled[j] = True
+                        if qty <= 0:
+                            continue
+                        real_cost      = qty * fill_price
+                        fee            = real_cost * commission
+                        position_qty  += qty
+                        position_cost += real_cost + fee
+                        equity        -= fee
+
+                # Цикл while продолжается — проверяем TP снова на том же bar_high
 
         # Equity curve — каждый бар по bar_low (честная просадка)
         mtm_low = equity
