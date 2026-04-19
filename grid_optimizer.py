@@ -351,8 +351,21 @@ def optimize(
     # Убираем колонку params из CSV (она содержит вложенные списки)
     save_cols = [c for c in df_res.columns if c != "params"]
     if save_to:
-        df_res[save_cols].to_csv(save_to, index=False)
-        print(f"\n  Результаты сохранены: {save_to}")
+        save_df = df_res[save_cols]
+        if os.path.exists(save_to):
+            # Дописываем к существующему файлу без заголовка.
+            # Выравниваем колонки по существующему CSV, чтобы порядок совпадал
+            # (лишние — отбрасываем, отсутствующие — NaN).
+            try:
+                existing_cols = pd.read_csv(save_to, nrows=0).columns.tolist()
+                save_df = save_df.reindex(columns=existing_cols)
+            except Exception as e:
+                print(f"  ⚠ Не удалось прочитать заголовок {save_to}: {e}")
+            save_df.to_csv(save_to, index=False, mode="a", header=False)
+            print(f"\n  Результаты дополнены в существующий CSV: {save_to}  (+{len(save_df)} строк)")
+        else:
+            save_df.to_csv(save_to, index=False)
+            print(f"\n  Результаты сохранены: {save_to}  ({len(save_df)} строк)")
 
     _print_summary(df_res, top_n, elapsed)
 
