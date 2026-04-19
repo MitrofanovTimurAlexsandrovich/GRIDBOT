@@ -12,11 +12,11 @@ grid_backtest.py
   6. Торгуем на 1-минутных свечах для максимальной точности.
 
 Метрики оценки:
-  - Максимальный PnL
-  - Минимальная MaxDrawdown
-  - Минимальное среднее время в сделке (в минутах)
+  - Максимальный PnL  (положительная награда)
+  - Минимальное максимальное время в сделке (в минутах)  (штраф)
 
-Score = PnL/|MaxDD| * (1 / avg_trade_minutes)  — комбинированная метрика
+Score = PnL × penalty(max_trade_minutes)  — комбинированная метрика
+        penalty = 1 / (1 + max_trade_minutes / TIME_NORM)^2
 """
 
 from __future__ import annotations
@@ -467,16 +467,17 @@ def run_grid_backtest(
 
 def compute_score(r: BacktestResult, min_trades: int = 5) -> float:
     """
-    Score = survival * pnl * speed_bonus
+    Score = PnL × penalty_max_time
 
-    survival     = (initial_capital - MaxDD) / initial_capital
-                   сколько капитала остаётся в худший момент (0..1)
-                   чем ближе к 1 — тем лучше, при MaxDD >= capital = 0
+    Положительная награда — total_pnl (чем больше PnL, тем лучше).
+    Штраф    — penalty_max_time за абсолютное максимальное время сделки.
 
-    penalty_max = 1 / (1 + (max/avg - 1))^2 — прогрессирующий штраф за выброс
-                  max==avg -> 0 штрафа | max=5×avg -> 0.04 | max=10×avg -> 0.01
-
-    Score = PnL × penalty_max
+    penalty_max_time = 1 / (1 + max_trade_minutes / TIME_NORM)^2
+                       TIME_NORM = 720 минут (12 часов)
+                       max_time=0      -> penalty = 1.00  (штрафа нет)
+                       max_time=720    -> penalty ≈ 0.25
+                       max_time=1440   -> penalty ≈ 0.111
+                       max_time=2880   -> penalty ≈ 0.040
 
     Возвращает -999 если сделок мало, PnL <= 0 или капитал уничтожен.
     """
@@ -487,10 +488,9 @@ def compute_score(r: BacktestResult, min_trades: int = 5) -> float:
     if r.last_365_stats.get("trades", 0) < 12:
         return -999.0
 
-    # прогрессирующий штраф за выброс max vs avg
-    ratio       = r.max_trade_minutes / max(r.avg_trade_minutes, 1.0)
-    excess      = max(ratio - 1.0, 0.0)
-    penalty_max = 1.0 / (1.0 + excess) ** 2
+    # Штраф за абсолютное максимальное время сделки (в минутах)
+    TIME_NORM        = 1440.0  # 12 часов
+    penalty_max_time = 1.0 / (1.0 + r.max_trade_minutes / TIME_NORM) ** 2
 
-    score = r.total_pnl * penalty_max
+    score = r.total_pnl * penalty_max_time
     return round(score, 6)
