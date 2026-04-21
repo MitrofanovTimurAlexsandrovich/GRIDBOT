@@ -231,6 +231,8 @@ def optimize(
     min_contract: float = 0.0,
     tp_list:      list  = None,
     search_space: dict  = None,   # пространство поиска из main_grid.py
+    data_file:    str   = "",     # путь к CSV с рыночными данными — для метаданных
+    reinvest:     bool  = False,  # реинвест прибыли в каждую новую сетку
 ) -> pd.DataFrame:
     """
     Random Search + Elite Guided Narrowing.
@@ -305,6 +307,7 @@ def optimize(
         try:
             r = run_grid_backtest(df, gp, commission=commission,
                                   initial_capital=initial_capital,
+                                  reinvest=reinvest,
                                   min_contract=min_contract)
             s = r.score
         except Exception as e:
@@ -329,6 +332,15 @@ def optimize(
             "size_min":          p["size_min"],
             "size_max":          p["size_max"],
             "size_mode":         p["size_mode"],
+            # Точные значения для побитового воспроизведения (важно для random-режимов)
+            "steps_json":        json.dumps(p["steps"]),
+            "sizes_json":        json.dumps(p["sizes"]),
+            # Метаданные прогона — общие для всей итерации, но удобны построчно
+            "data_file":         data_file,
+            "initial_capital":   initial_capital,
+            "commission":        commission,
+            "min_contract":      min_contract,
+            "reinvest":          bool(reinvest),
             "params":            p,       # полные параметры для воспроизведения
         }
         results.append(row)

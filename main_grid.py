@@ -206,6 +206,8 @@ def main():
         min_contract    = MIN_CONTRACT,
         tp_list         = TP_LIST,
         search_space    = SEARCH_SPACE,
+        data_file       = FILE,        # запишется в CSV для воспроизведения
+        reinvest        = REINVEST,    # совпадает с финальной визуализацией
     )
 
     if df_results.empty:

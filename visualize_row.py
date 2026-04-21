@@ -15,14 +15,16 @@ import ast
 #  CONFIG — всё настраивается здесь
 # ═════════════════════════════════════════════════════════════════════════════
 
-# Путь к CSV с рыночными данными (тот же файл что использовался при оптимизации)
-FILE = "C:/Users/Madness/PycharmProjects/Crupto_Data_Joiner/Raw_Data/BYBIT_DOGEUSDT_LINEAR_2021_2026.csv"
+# Путь к CSV с рыночными данными (тот же файл что использовался при оптимизации).
+# Если в строке CSV-результатов есть колонка data_file — она имеет приоритет
+# над этим значением (FILE используется как fallback).
+FILE = "C:/Users/Madness/PycharmProjects/Crupto_Data_Joiner/Raw_Data_Spot/BYBIT_DOGEUSDT_SPOT_2021_2026.csv"
 
 # Источник параметров — выбери один из двух вариантов:
 # CSV: результаты оптимизации (шаги/размеры для random-режимов могут не совпасть)
 # JSON: точные параметры (рекомендуется)
 # Оставь пустым "" — тогда путь построится автоматически из имени FILE
-CSV_PATH  = "C:/Users/Madness/PycharmProjects/GRIDBOT/results/grid_opt_BYBIT_DOGEUSDT_LINEAR_2021_2026.csv"
+CSV_PATH  = "C:/Users/Madness/PycharmProjects/GRIDBOT/results/grid_opt_BYBIT_DOGEUSDT_SPOT_2021_2026_2.0.csv"
 JSON_PATH = ""
 
 # Какой источник использовать: "csv" или "json"
@@ -33,16 +35,18 @@ ROW = None
 
 # Поиск по score — если задан, игнорирует ROW и ищет строку с ближайшим score
 # Пример: FIND_SCORE = 1679.6830  |  None = не используется
-FIND_SCORE = 4.1389
+FIND_SCORE = 0.206179
 
 # Показать таблицу топ-N строк CSV и выйти (True = только просмотр, без графика)
 LIST_ONLY = False
 LIST_TOP_N = 20
 
-# Капитал и комиссия
-CAPITAL    = 1000.0
-COMMISSION = 0.0018
-REINVEST   = False      # True = реинвестировать прибыль в каждую новую сетку
+# Капитал и комиссия (используются как fallback — если в CSV есть
+# initial_capital / commission / min_contract / reinvest, берём их оттуда).
+CAPITAL      = 1000.0
+COMMISSION   = 0.0018
+REINVEST     = False      # True = реинвестировать прибыль в каждую новую сетку
+MIN_CONTRACT = 0.1        # минимальный лот в монетах (DOGE=1.0, BTC=0.001 и т.п.)
 
 # Папка для сохранения графика
 OUT_DIR = "results"
@@ -64,6 +68,11 @@ def params_from_csv_row(csv_path: str, row_idx: int) -> dict:
     """
     Восстанавливает параметры из строки CSV.
     Автоматически определяет формат: grid_opt или grid_scan.
+
+    Если в CSV есть колонки steps_json / sizes_json — читаем оттуда точные
+    значения (побитовое воспроизведение даже для random-режимов).
+    Иначе — fallback на генерацию по (step_min, step_max, step_mode) с seed=42
+    (исторический режим, для random может не совпасть с оригиналом).
     """
     df   = pd.read_csv(csv_path)
     if row_idx >= len(df):
@@ -97,19 +106,41 @@ def params_from_csv_row(csv_path: str, row_idx: int) -> dict:
     size_max  = float(row["size_max"])
     size_mode = str(row["size_mode"])
 
-    from grid_optimizer import _generate_steps, _generate_sizes
-    import random
-    random.seed(42)
-    steps = _generate_steps(n, step_min, step_max, step_mode)
-    raw_sizes = _generate_sizes(n, size_min, size_max, size_mode)
+    # ── Пытаемся взять точные steps/sizes из CSV ─────────────────────────────
+    steps = sizes = None
+    if "steps_json" in cols and pd.notna(row.get("steps_json")):
+        try:
+            steps = json.loads(row["steps_json"])
+        except Exception:
+            steps = None
+    if "sizes_json" in cols and pd.notna(row.get("sizes_json")):
+        try:
+            sizes = json.loads(row["sizes_json"])
+        except Exception:
+            sizes = None
 
-    # Нормируем на CAPITAL — сумма ордеров всегда = 100% капитала
-    total_sz = sum(raw_sizes)
-    sizes = [round(s / total_sz * CAPITAL, 4) for s in raw_sizes] if total_sz > 0 else raw_sizes
+    if steps is not None and sizes is not None and len(steps) == n and len(sizes) == n:
+        print("  Точные steps/sizes взяты из CSV (побитовое воспроизведение).")
+    else:
+        # Fallback: пере-генерация с фиксированным seed — для старых CSV без steps_json
+        from grid_optimizer import _generate_steps, _generate_sizes
+        import random
+        random.seed(42)
+        steps = _generate_steps(n, step_min, step_max, step_mode)
+        raw_sizes = _generate_sizes(n, size_min, size_max, size_mode)
+        total_sz = sum(raw_sizes)
+        sizes = [round(s / total_sz * CAPITAL, 4) for s in raw_sizes] if total_sz > 0 else raw_sizes
+        if "random" in (step_mode, size_mode):
+            print("  ⚠ Колонок steps_json/sizes_json нет. Режим random — "
+                  "шаги/размеры могут отличаться от оригинала. Пере-запусти "
+                  "оптимизацию (обновлённый main_grid.py пишет точные значения) "
+                  "или используй JSON.")
 
-    if "random" in (step_mode, size_mode):
-        print("  Режим random — шаги/размеры могут отличаться от оригинала.")
-        print("     Используй JSON для точного воспроизведения.")
+    # ── Метаданные прогона из CSV (если есть) ────────────────────────────────
+    meta = {}
+    for key in ("data_file", "initial_capital", "commission", "min_contract", "reinvest"):
+        if key in cols and pd.notna(row.get(key)):
+            meta[key] = row[key]
 
     return {
         "n_orders":  n,
@@ -122,6 +153,7 @@ def params_from_csv_row(csv_path: str, row_idx: int) -> dict:
         "step_max":  step_max,
         "size_min":  size_min,
         "size_max":  size_max,
+        "_meta":     meta,   # служебное — метаданные прогона из CSV
     }
 
 
@@ -205,20 +237,38 @@ def main():
           f"sizes={params['size_min']:.0f}..{params['size_max']:.0f}$  "
           f"step_mode={params['step_mode']}  size_mode={params['size_mode']}")
 
+    # ── Определяем путь к данным и параметры бэктеста ────────────────────────
+    # Приоритет: метаданные из CSV → константы в CONFIG.
+    meta = params.get("_meta", {})
+    data_file    = str(meta["data_file"])         if "data_file"       in meta and str(meta["data_file"]).strip() else FILE
+    capital      = float(meta["initial_capital"]) if "initial_capital" in meta else CAPITAL
+    commission   = float(meta["commission"])      if "commission"      in meta else COMMISSION
+    min_contract = float(meta["min_contract"])    if "min_contract"    in meta else MIN_CONTRACT
+    reinvest     = bool(meta["reinvest"])         if "reinvest"        in meta else REINVEST
+
+    if data_file != FILE:
+        print(f"  ⚠ FILE в конфиге ({FILE}) не совпадает с data_file из CSV.")
+        print(f"     Использую data_file из CSV: {data_file}")
+    print(f"  Параметры прогона: capital={capital}  comm={commission}  "
+          f"min_contract={min_contract}  reinvest={reinvest}")
+
     # Загружаем данные и запускаем бэктест
-    df = load_data(FILE)
+    df = load_data(data_file)
 
     from grid_backtest import GridParams, run_grid_backtest
     from grid_visualizer import plot_best_result
 
     gp = GridParams(
-        n_orders = params["n_orders"],
-        steps    = params["steps"],
-        sizes    = params["sizes"],
-        tp_pct   = params["tp_pct"],
+        n_orders     = params["n_orders"],
+        steps        = params["steps"],
+        sizes        = params["sizes"],
+        tp_pct       = params["tp_pct"],
+        min_contract = min_contract,
     )
     print("  Запуск бэктеста...")
-    r = run_grid_backtest(df, gp, commission=COMMISSION, initial_capital=CAPITAL, reinvest=REINVEST)
+    r = run_grid_backtest(df, gp, commission=commission,
+                          initial_capital=capital, reinvest=reinvest,
+                          min_contract=min_contract)
 
     print(f"\n  {'═'*50}")
     print(f"  PnL:           {r.total_pnl:+.2f} $")
@@ -232,7 +282,7 @@ def main():
     print(f"  Profit Factor: {r.profit_factor:.2f}")
     print(f"  Sharpe:        {r.sharpe:.3f}")
     print(f"  Score:         {r.score:.4f}")
-    print(f"  Реинвест:      {'ВКЛ ♻' if REINVEST else 'ВЫКЛ'}")
+    print(f"  Реинвест:      {'ВКЛ ♻' if reinvest else 'ВЫКЛ'}")
 
     if r.yearly_stats:
         print()
@@ -254,20 +304,20 @@ def main():
     # ── Распечатка точных параметров каждого ордера ───────────────────────────
     print(f"\n  {'═'*60}")
     print(f"  Параметры ордеров для ввода в торговый сервис")
-    print(f"  N={params['n_orders']}  TP={params['tp_pct']:.4f}%  Capital={CAPITAL}$")
+    print(f"  N={params['n_orders']}  TP={params['tp_pct']:.4f}%  Capital={capital}$")
     print(f"  {'═'*60}")
     print(f"  {'Ордер':>6}  {'От входа %':>12}  {'Размер $':>10}  {'Доля %':>8}")
     print(f"  {'─'*6}  {'─'*12}  {'─'*10}  {'─'*8}")
     cum = 0.0
     for i, (step, size) in enumerate(zip(params['steps'], params['sizes'])):
-        share = size / CAPITAL * 100
+        share = size / capital * 100
         if i == 0:
             print(f"  {i+1:>6}  {'0.0000':>11}%  {size:>10.2f}$  {share:>7.2f}%  <- рыночный (немедленно)")
         else:
             cum += step
             print(f"  {i+1:>6}  {cum:>11.4f}%  {size:>10.2f}$  {share:>7.2f}%")
     total_size = sum(params['sizes'])
-    total_share = total_size / CAPITAL * 100
+    total_share = total_size / capital * 100
     print(f"  {'─'*6}  {'─'*12}  {'─'*10}  {'─'*8}")
     print(f"  {'ИТОГО':>6}  {cum:>11.4f}%  {total_size:>10.2f}$  {total_share:>7.2f}%")
     print(f"  TP от средней цены входа: +{params['tp_pct']:.4f}%")
