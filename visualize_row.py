@@ -24,7 +24,7 @@ FILE = "C:/Users/Madness/PycharmProjects/Crupto_Data_Joiner/Raw_Data_Spot/BYBIT_
 # CSV: результаты оптимизации (шаги/размеры для random-режимов могут не совпасть)
 # JSON: точные параметры (рекомендуется)
 # Оставь пустым "" — тогда путь построится автоматически из имени FILE
-CSV_PATH  = "C:/Users/Madness/PycharmProjects/GRIDBOT/results/grid_opt_BYBIT_DOGEUSDT_SPOT_2021_2026_2.0.csv"
+CSV_PATH  = "C:/Users/Madness/PycharmProjects/GRIDBOT/results/grid_opt_BYBIT_DOGEUSDT_SPOT_2021_2026.csv"
 JSON_PATH = ""
 
 # Какой источник использовать: "csv" или "json"
@@ -35,8 +35,7 @@ ROW = None
 
 # Поиск по score — если задан, игнорирует ROW и ищет строку с ближайшим score
 # Пример: FIND_SCORE = 1679.6830  |  None = не используется
-FIND_SCORE = 0.206179
-
+FIND_SCORE = 0.086297
 # Показать таблицу топ-N строк CSV и выйти (True = только просмотр, без графика)
 LIST_ONLY = False
 LIST_TOP_N = 20
